@@ -1,48 +1,49 @@
 Lab2 Binary Semantic Segmentation — 技術說明
 
-【作業目標】
-在 Oxford-IIIT Pet 資料集上實作二元語義分割，將寵物前景與背景分離。
-需實作兩種模型：嚴格遵照 2015 年論文的 UNet，以及以 ResNet34 為 Encoder
-的 UNet Decoder，並以 Dice Score 作為評估指標上傳 Kaggle 競賽。
+【資料增強】
+訓練集套用以下增強，幾何變換同步施加於圖片與 mask，
+Color Jitter 僅套用於圖片以避免影響分割標註：
+  - 水平翻轉（50%）、垂直翻轉（50%）
+  - 隨機旋轉 ±15°（50%，mask 用 NEAREST 插值保持二值）
+  - RandomResizedCrop scale=(0.7,1.0)、ratio=(0.75,1.33)（50%）
+  - Color Jitter brightness/contrast/saturation=0.3, hue=0.05（100%）
+所有圖片 resize 至 256×256，以 ImageNet mean/std 正規化。
 
-【實作要求】
-UNet 須遵守原始論文規範：禁止 BatchNorm 與 padding，上採樣僅可使用
-ConvTranspose2d，skip connection 以 center crop 對齊特徵圖。
-ResNet34-UNet 則允許 BatchNorm 與 bilinear 上採樣，skip connection
-以 F.pad 處理尺寸不一致問題。兩者皆採 sigmoid 輸出，損失函式使用
-BCE 與 Dice Loss 各佔 0.5 的 combined loss，並以 Adam + CosineAnnealingLR
-進行訓練。
+【模型架構】
+UNet（嚴格遵照 2015 論文）：
+Encoder 五層（channel 64→128→256→512→1024），每層兩個
+unpadded Conv3×3（padding=0，無 BN），MaxPool2×2 下採樣。
+Decoder 以 ConvTranspose2d 2×2 上採樣，skip connection
+以 center crop 對齊後 concat，共 31M 參數。
 
-【遇到的問題】
-UNet 訓練極不穩定，歷經多次實驗 Val Dice 始終停在 0.26 附近，模型幾乎
-無法有效學習。分析後歸納出三個根本原因：
-1. 無 BatchNorm 導致各層 activation 尺度差異大，梯度訊號噪音高。
-2. 深層網路缺乏正規化，梯度容易爆炸，Dice Score 劇烈震盪。
-3. 損失函式幾乎不動（約 0.64），模型陷入不良局部最小值。
+ResNet34-UNet：
+以 ResNet34 作為 Encoder（含 BN 與殘差連接），
+Decoder 採 bilinear 上採樣，skip connection 以 F.pad
+動態補齊尺寸差異後 concat，共 24.5M 參數。
 
-ResNet34-UNet 則在 decode 階段出現特徵圖尺寸不匹配的問題，
-導致 skip connection 無法直接 concatenate。
+【訓練方式】
+Optimizer: Adam（weight_decay=1e-5）
+Scheduler: CosineAnnealingLR（T_max=epochs，eta_min=1e-6）
+Loss: 0.5×BCE + 0.5×Dice Loss
+僅在 Val Dice 創新高時儲存 checkpoint。
 
-【UNet 圖片尺寸縮小問題】
-UNet 禁止在 Conv2d 內使用 padding，每個 3×3 卷積讓空間縮小 2px。
-整個網路共 18 層卷積，256×256 的輸入到輸出只剩 68×68，無法對齊
-原始尺寸產生完整的 segmentation mask。
+問題一：UNet 無 BN，訓練極不穩定，Val Dice 長期卡在 0.26。
+加入 Gradient Clipping（max_norm=1.0）、Kaiming 初始化，
+並將 BCE 權重降至 0.3 以強化 Dice Loss 抵抗類別不平衡。
 
-解決方式採用原始論文 Section 2 的 Overlap-Tile Strategy：在輸入
-進網路前，先以 F.pad（mode='reflect'，鏡像填充）將圖片擴大為
-444×444，使網路輸出恰為 260×260，最後 center crop 回 256×256。
+問題二：UNet 使用 unpadded conv，256×256 輸入輸出僅剩 68×68。
+採用論文原生的 Overlap-Tile Strategy：以 reflect padding 先將
+輸入擴大為 444×444，使網路輸出 260×260，再 center crop 回
+256×256。reflect padding 施加於輸入影像而非卷積層內部，
+不違反論文的 no-padding 規定。
 
-此做法不違反禁止 padding 的規定，原因在於：
-1. 禁止的是 Conv2d(padding=1) 這類在卷積操作內部補值的行為；
-2. F.pad 施加於輸入影像本身，是進入網路前的前處理步驟；
-3. 使用 reflect mode 而非補零，符合論文精神，保留邊緣特徵分布。
+【Evaluate】
+在驗證集上以 Dice Score（threshold=0.5 二值化後計算）評估，
+對每個 batch 平均後再整體平均。
+ResNet34-UNet 達 Val Dice 0.91，UNet 約 0.26。
 
-【解決方法】
-針對 UNet，加入 gradient clipping（max_norm=1.0）壓制梯度爆炸，
-調低學習率至 1e-4，並在 combined loss 中降低 BCE 權重（bce_weight=0.3）
-以增強 Dice Loss 對類別不平衡的抵抗力。
-
-針對 ResNet34-UNet 的尺寸不匹配問題，在每個 DecoderBlock 的
-concatenate 前加入 F.pad 動態補齊差值，確保任意輸入尺寸皆可正常運作。
-最終 ResNet34-UNet 在第一個 epoch 即達 Val Dice 0.69，訓練 50 epochs
-後穩定收斂至 Val Dice 0.91，成功提交 Kaggle。
+【Inference】
+以 threshold=0.5 對輸出機率圖二值化，再用 PIL NEAREST 插值
+將 256×256 mask resize 回各圖片的原始尺寸（Kaggle 以原始尺寸
+解碼 RLE，若不 resize 則 mask 完全錯位），最後以
+column-major RLE 編碼輸出 submission.csv。
