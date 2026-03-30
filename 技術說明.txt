@@ -1,49 +1,44 @@
 Lab2 Binary Semantic Segmentation — 技術說明
 
 【資料增強】
-訓練集套用以下增強，幾何變換同步施加於圖片與 mask，
-Color Jitter 僅套用於圖片以避免影響分割標註：
-  - 水平翻轉（50%）、垂直翻轉（50%）
-  - 隨機旋轉 ±15°（50%，mask 用 NEAREST 插值保持二值）
-  - RandomResizedCrop scale=(0.7,1.0)、ratio=(0.75,1.33)（50%）
-  - Color Jitter brightness/contrast/saturation=0.3, hue=0.05（100%）
-所有圖片 resize 至 256×256，以 ImageNet mean/std 正規化。
+訓練時對圖片套用多種增強。幾何變換（翻轉、旋轉、裁切）會同步
+施加於圖片與 mask，Color Jitter 則只套用於圖片，避免改動標註。
+具體包含水平與垂直翻轉（各 50%）、隨機旋轉 ±15°（50%，mask
+使用 NEAREST 插值以保持二值）、RandomResizedCrop（50%）以及
+全量套用的 Color Jitter。所有圖片統一 resize 至 256×256 後，
+以 ImageNet mean/std 正規化。
 
 【模型架構】
-UNet（嚴格遵照 2015 論文）：
-Encoder 五層（channel 64→128→256→512→1024），每層兩個
-unpadded Conv3×3（padding=0，無 BN），MaxPool2×2 下採樣。
-Decoder 以 ConvTranspose2d 2×2 上採樣，skip connection
-以 center crop 對齊後 concat，共 31M 參數。
+UNet 嚴格依照 2015 年原始論文實作：Encoder 共五層，channel 數
+從 64 逐步加倍至 1024，每層使用兩個 unpadded Conv3×3（無 BN），
+以 MaxPool2×2 下採樣。Decoder 以 ConvTranspose2d 2×2 上採樣，
+skip connection 需先 center crop 對齊尺寸後再 concat，共 31M 參數。
 
-ResNet34-UNet：
-以 ResNet34 作為 Encoder（含 BN 與殘差連接），
-Decoder 採 bilinear 上採樣，skip connection 以 F.pad
-動態補齊尺寸差異後 concat，共 24.5M 參數。
+ResNet34-UNet 以 ResNet34 作為 Encoder，帶有 BN 與殘差連接，
+Decoder 採 bilinear 上採樣，skip connection 以 F.pad 動態補齊
+尺寸差異後 concat，共 24.5M 參數。
 
 【訓練方式】
-Optimizer: Adam（weight_decay=1e-5）
-Scheduler: CosineAnnealingLR（T_max=epochs，eta_min=1e-6）
-Loss: 0.5×BCE + 0.5×Dice Loss
-僅在 Val Dice 創新高時儲存 checkpoint。
+使用 Adam（weight_decay=1e-5）搭配 CosineAnnealingLR（eta_min=1e-6），
+Loss 為 0.5×BCE + 0.5×Dice Loss，只有在 Val Dice 刷新最高紀錄時
+才存下 checkpoint。
 
-問題一：UNet 無 BN，訓練極不穩定，Val Dice 長期卡在 0.26。
-加入 Gradient Clipping（max_norm=1.0）、Kaiming 初始化，
-並將 BCE 權重降至 0.3 以強化 Dice Loss 抵抗類別不平衡。
-
-問題二：UNet 使用 unpadded conv，256×256 輸入輸出僅剩 68×68。
-採用論文原生的 Overlap-Tile Strategy：以 reflect padding 先將
-輸入擴大為 444×444，使網路輸出 260×260，再 center crop 回
-256×256。reflect padding 施加於輸入影像而非卷積層內部，
-不違反論文的 no-padding 規定。
+訓練 UNet 時遇到兩個問題。第一，沒有 BN 導致訓練極不穩定，
+Val Dice 長期卡在 0.26，加入 Gradient Clipping（max_norm=1.0）
+與 Kaiming 初始化後明顯改善，另外將 BCE 權重降至 0.3，讓
+Dice Loss 在類別不平衡時發揮更大作用。第二，unpadded conv 讓
+256×256 的輸入到輸出只剩 68×68。對此採用論文原生的
+Overlap-Tile Strategy：在輸入進網路前先以 reflect padding 擴大
+至 444×444，輸出 260×260 後再 center crop 回 256×256。這裡的
+padding 是施加在輸入影像而非卷積層內部，因此不違反論文規定。
 
 【Evaluate】
-在驗證集上以 Dice Score（threshold=0.5 二值化後計算）評估，
-對每個 batch 平均後再整體平均。
-ResNet34-UNet 達 Val Dice 0.91，UNet 約 0.26。
+在驗證集上計算 Dice Score，先以 threshold=0.5 將輸出機率圖
+二值化，再對每個 batch 的 Dice 取平均後整體平均。
+ResNet34-UNet 最終達 Val Dice 0.91，UNet 約 0.26。
 
 【Inference】
-以 threshold=0.5 對輸出機率圖二值化，再用 PIL NEAREST 插值
-將 256×256 mask resize 回各圖片的原始尺寸（Kaggle 以原始尺寸
-解碼 RLE，若不 resize 則 mask 完全錯位），最後以
-column-major RLE 編碼輸出 submission.csv。
+將輸出機率圖以 threshold=0.5 二值化後，用 PIL NEAREST 插值
+resize 回各圖片的原始尺寸（Kaggle 用原始尺寸解碼 RLE，若跳過
+這步 mask 會完全錯位），最後以 column-major RLE 編碼寫出
+submission.csv 提交。
