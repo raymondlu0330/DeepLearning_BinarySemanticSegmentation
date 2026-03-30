@@ -1,0 +1,34 @@
+Lab2 Binary Semantic Segmentation — 技術說明
+
+【作業目標】
+在 Oxford-IIIT Pet 資料集上實作二元語義分割，將寵物前景與背景分離。
+需實作兩種模型：嚴格遵照 2015 年論文的 UNet，以及以 ResNet34 為 Encoder
+的 UNet Decoder，並以 Dice Score 作為評估指標上傳 Kaggle 競賽。
+
+【實作要求】
+UNet 須遵守原始論文規範：禁止 BatchNorm 與 padding，上採樣僅可使用
+ConvTranspose2d，skip connection 以 center crop 對齊特徵圖。
+ResNet34-UNet 則允許 BatchNorm 與 bilinear 上採樣，skip connection
+以 F.pad 處理尺寸不一致問題。兩者皆採 sigmoid 輸出，損失函式使用
+BCE 與 Dice Loss 各佔 0.5 的 combined loss，並以 Adam + CosineAnnealingLR
+進行訓練。
+
+【遇到的問題】
+UNet 訓練極不穩定，歷經多次實驗 Val Dice 始終停在 0.26 附近，模型幾乎
+無法有效學習。分析後歸納出三個根本原因：
+1. 無 BatchNorm 導致各層 activation 尺度差異大，梯度訊號噪音高。
+2. 深層網路缺乏正規化，梯度容易爆炸，Dice Score 劇烈震盪。
+3. 損失函式幾乎不動（約 0.64），模型陷入不良局部最小值。
+
+ResNet34-UNet 則在 decode 階段出現特徵圖尺寸不匹配的問題，
+導致 skip connection 無法直接 concatenate。
+
+【解決方法】
+針對 UNet，加入 gradient clipping（max_norm=1.0）壓制梯度爆炸，
+調低學習率至 1e-4，並在 combined loss 中降低 BCE 權重（bce_weight=0.3）
+以增強 Dice Loss 對類別不平衡的抵抗力。
+
+針對 ResNet34-UNet 的尺寸不匹配問題，在每個 DecoderBlock 的
+concatenate 前加入 F.pad 動態補齊差值，確保任意輸入尺寸皆可正常運作。
+最終 ResNet34-UNet 在第一個 epoch 即達 Val Dice 0.69，訓練 50 epochs
+後穩定收斂至 Val Dice 0.91，成功提交 Kaggle。
