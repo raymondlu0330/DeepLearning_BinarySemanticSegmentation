@@ -29,10 +29,7 @@ class OxfordPetDataset(Dataset):
             root (str):      資料集根目錄，須包含 images/ 和 annotations/ 子目錄。
             mode (str):      'train'、'val' 或 'test' 三選一。
             img_size (int):  將圖片和 mask resize 到此正方形大小（預設 256）。
-            list_dir (str):  【新增】課程提供的 split 檔案目錄路徑。
-                             提供時直接讀取該目錄下的 train.txt / val.txt / test_*.txt，
-                             不再使用原始的 trainval.txt 80/20 切分。
-                             例如：'dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-unet'
+            list_dir (str):  課程提供的 split 檔案目錄路徑，讀取該目錄下的 train.txt / val.txt / test_*.txt。
         """
         assert mode in ("train", "val", "test"), f"無效的 mode: {mode}"
         self.root = root
@@ -44,7 +41,7 @@ class OxfordPetDataset(Dataset):
         self.mask_dir = os.path.join(root, "annotations", "trimaps")
 
         if list_dir is not None:
-            # ---- 【新增】使用課程提供的指定 split 檔案 ----
+            # 使用Kaggle提供的指定 split 檔案
             if mode == "train":
                 list_file = os.path.join(list_dir, "train.txt")
             elif mode == "val":
@@ -66,31 +63,7 @@ class OxfordPetDataset(Dataset):
                     if line.strip() and not line.startswith("#")
                 ]
         else:
-            # ---- 原始行為：讀 trainval.txt 並做 80/20 切分 ----
-            if mode in ("train", "val"):
-                list_file = os.path.join(root, "annotations", "trainval.txt")
-            else:
-                list_file = os.path.join(root, "annotations", "test.txt")
-
-            with open(list_file) as f:
-                lines = [
-                    line.strip().split()[0]
-                    for line in f
-                    if line.strip() and not line.startswith("#")
-                ]
-
-            # 80/20 切分，使用固定隨機種子 42 確保可重現
-            if mode in ("train", "val"):
-                rng = random.Random(42)
-                indices = list(range(len(lines)))
-                rng.shuffle(indices)
-                split = int(0.8 * len(lines))
-                if mode == "train":
-                    self.filenames = [lines[i] for i in indices[:split]]
-                else:
-                    self.filenames = [lines[i] for i in indices[split:]]
-            else:
-                self.filenames = lines
+            raise ValueError("請提供 list_dir 參數以指定 Kaggle 提供的 split 檔案目錄。")
 
         print(f'[{self.mode}] 載入 {len(self.filenames)} 張圖片')
 
@@ -229,3 +202,4 @@ if __name__ == "__main__":
     images, masks = next(iter(train_loader))
     print("圖片 shape:", images.shape)   # (B, 3, 256, 256)
     print("Mask shape:", masks.shape)    # (B, 1, 256, 256)
+                                                                                                                                                                                                                                              
