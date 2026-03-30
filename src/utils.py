@@ -1,26 +1,24 @@
-"""工具函式集：Dice 指標、損失函式、RLE 編碼、Checkpoint 存取。"""
-
 import torch
 import numpy as np
 
 
 def dice_score(pred, target, threshold=0.5, smooth=1e-6):
-    """計算 Dice Similarity Coefficient（評估指標，不可微分）。
+    # 計算 Dice Similarity Coefficient。
 
-    公式：Dice = 2 * |X ∩ Y| / (|X| + |Y|)
+    # 公式：Dice = 2 * |X ∩ Y| / (|X| + |Y|)
 
-    先用 threshold 將預測機率二值化，再與 ground truth 比較。
-    適合用於 validation / evaluation，不用於 loss 計算（因為不可微分）。
+    # 先用 threshold 將預測機率binary化，再與 ground truth 比較。
+    # 適合用於 validation / evaluation，不用於 loss 計算（因為不可微分）。
 
-    Args:
-        pred      (Tensor): 模型輸出的機率值，shape (B, 1, H, W)，值域 [0, 1]。
-        target    (Tensor): Ground truth binary mask，shape (B, 1, H, W)，值 0 或 1。
-        threshold (float):  二值化閾值，預設 0.5。
-        smooth    (float):  平滑項，防止分母為 0（全黑 mask 的邊緣情況）。
+    # Args:
+    #     pred      (Tensor): 模型輸出的機率值，shape (B, 1, H, W)，值域 [0, 1]。
+    #     target    (Tensor): Ground truth binary mask，shape (B, 1, H, W)，值 0 或 1。
+    #     threshold (float):  二值化閾值，預設 0.5。
+    #     smooth    (float):  平滑項，防止分母為 0（全黑 mask 的邊緣情況）。
 
-    Returns:
-        float: batch 內各圖片 Dice 分數的平均值。
-    """
+    # Returns:
+    #     float: batch 內各圖片 Dice 分數的平均值。
+    
     # 用 threshold 把機率轉成 0 或 1（不可微分操作）
     pred_bin = (pred > threshold).float()
     target   = target.float()
@@ -36,21 +34,21 @@ def dice_score(pred, target, threshold=0.5, smooth=1e-6):
 
 
 def dice_loss(pred, target, smooth=1e-6):
-    """可微分的 Dice Loss（使用機率值，不二值化）。
+    # 可微分的 Dice Loss（使用機率值，不二值化）。
 
-    與 dice_score 不同，這裡直接使用 sigmoid 輸出的連續機率值做計算，
-    使損失函式對整個網路可微分，可以反向傳播。
+    # 與 dice_score 不同，這裡直接使用 sigmoid 輸出的連續機率值做計算，
+    # 使損失函式對整個網路可微分，可以反向傳播。
 
-    公式：DiceLoss = 1 - Dice
+    # 公式：DiceLoss = 1 - Dice
 
-    Args:
-        pred   (Tensor): Sigmoid 機率值，shape (B, 1, H, W)。
-        target (Tensor): Ground truth binary mask，shape (B, 1, H, W)。
-        smooth (float):  平滑項，防止除零。
+    # Args:
+    #     pred   (Tensor): Sigmoid 機率值，shape (B, 1, H, W)。
+    #     target (Tensor): Ground truth binary mask，shape (B, 1, H, W)。
+    #     smooth (float):  平滑項，防止除零。
 
-    Returns:
-        Tensor: 純量 Dice Loss，值域 [0, 1]，值越小越好。
-    """
+    # Returns:
+    #     Tensor: 純量 Dice Loss，值域 [0, 1]，值越小越好。
+    
     pred   = pred.float()
     target = target.float()
 
@@ -62,32 +60,32 @@ def dice_loss(pred, target, smooth=1e-6):
     # 1 - Dice 作為 loss（越小越好），對 batch 取平均
     return (1.0 - dice).mean()
 
-
+#Claude Co-work
 def combined_loss(pred, target, bce_weight=0.5):
-    """BCE Loss 和 Dice Loss 的加權組合損失。
+    # BCE Loss 和 Dice Loss 的加權combine loss。
 
-    公式：combined = bce_weight × WeightedBCE + (1 - bce_weight) × DiceLoss
+    # 公式：combined = bce_weight × WeightedBCE + (1 - bce_weight) × DiceLoss
 
-    結合兩種 loss 的優點：
-    - WeightedBCE：自動計算 pos_weight 補償前景/背景不平衡，防止 mode collapse
-    - Dice：直接優化評估指標，對正負樣本不平衡有魯棒性
+    # 結合兩種 loss 的優點：
+    # - WeightedBCE：自動計算 pos_weight 補償前景/背景不平衡，防止 mode collapse
+    # - Dice：直接優化評估指標，對正負樣本不平衡有魯棒性
 
-    【關鍵說明】pos_weight 的必要性：
-        Oxford Pet 資料集中背景像素約佔 70-80%，前景僅 20-30%。
-        若不加 pos_weight，BCE 梯度被大量背景像素主導，
-        模型會學到「全部預測背景」是降低 loss 的捷徑（mode collapse）。
-        動態計算 pos_weight = 背景數 / 前景數 可讓兩類梯度貢獻相等，
-        迫使模型真正學習辨識前景。
+    # 【關鍵說明】pos_weight 的必要性：
+    #     Oxford Pet 資料集中背景像素約佔 70-80%，前景僅 20-30%。
+    #     若不加 pos_weight，BCE 梯度被大量背景像素主導，
+    #     模型會學到「全部預測背景」是降低 loss 的捷徑（mode collapse）。
+    #     動態計算 pos_weight = 背景數 / 前景數 可讓兩類梯度貢獻相等，
+    #     迫使模型真正學習辨識前景。
 
-    Args:
-        pred       (Tensor): Sigmoid 機率值，shape (B, 1, H, W)。
-        target     (Tensor): Ground truth binary mask，shape (B, 1, H, W)。
-        bce_weight (float):  BCE loss 的權重，Dice loss 權重 = 1 - bce_weight。
-                             預設 0.5 代表各佔一半。
+    # Args:
+    #     pred       (Tensor): Sigmoid 機率值，shape (B, 1, H, W)。
+    #     target     (Tensor): Ground truth binary mask，shape (B, 1, H, W)。
+    #     bce_weight (float):  BCE loss 的權重，Dice loss 權重 = 1 - bce_weight。
+    #                          預設 0.5 代表各佔一半。
 
-    Returns:
-        Tensor: 純量組合損失。
-    """
+    # Returns:
+    #     Tensor: 純量組合損失。
+    
     import torch
     import torch.nn.functional as F
 
@@ -107,20 +105,19 @@ def combined_loss(pred, target, bce_weight=0.5):
     d_loss = dice_loss(pred, target)       # Soft Dice Loss
     return bce_weight * bce + (1.0 - bce_weight) * d_loss
 
-
+# Claude Co-work
 def rle_encode(mask):
-    """將 binary mask 做 Run-Length Encoding（RLE），用於 Kaggle 提交。
+    # 將 binary mask 做 Run-Length Encoding，用於 Kaggle 提交。
 
-    採用 column-major（Fortran）順序，這是 Kaggle 分割競賽的標準格式。
-    編碼格式為「起始位置 長度 起始位置 長度 ...」（1-indexed）。
+    # 採用 column-major順序( Kaggle 分割競賽的標準格式)，編碼格式為「起始位置 長度 起始位置 長度 ...」（1-indexed）。
 
-    Args:
-        mask (np.ndarray): 2D binary mask，shape (H, W)，值 0 或 1。
+    # Args:
+    #     mask (np.ndarray): 2D binary mask，shape (H, W)，值 0 或 1。
 
-    Returns:
-        str: RLE 編碼字串，例如 "5539 6 5794 18 ..."。
-             若 mask 全為 0（無前景），回傳空字串。
-    """
+    # Returns:
+    #     str: RLE 編碼字串，例如 "5539 6 5794 18 ..."。
+    #          若 mask 全為 0（無前景），回傳空字串。
+    
     # 按 Fortran（column-major）順序攤平：先遍歷欄，再遍歷列
     pixels = mask.flatten(order="F")
     # 在頭尾各加一個 0，方便偵測邊界
@@ -133,15 +130,8 @@ def rle_encode(mask):
 
 
 def save_checkpoint(model, optimizer, epoch, val_dice, path):
-    """儲存模型 checkpoint（weights + optimizer state + 訓練資訊）。
+    # 儲存模型 checkpoint（weights + optimizer state + 訓練資訊）。
 
-    Args:
-        model     : PyTorch 模型。
-        optimizer : 優化器（儲存 state 以便繼續訓練）。
-        epoch     (int):   目前 epoch 數。
-        val_dice  (float): 目前最佳 validation Dice。
-        path      (str):   儲存路徑（.pth 檔案）。
-    """
     torch.save(
         {
             "epoch":                epoch,
@@ -154,17 +144,7 @@ def save_checkpoint(model, optimizer, epoch, val_dice, path):
 
 
 def load_checkpoint(model, path, device):
-    """從 checkpoint 載入模型權重。
-
-    Args:
-        model  : PyTorch 模型實例（架構必須與儲存時相同）。
-        path   (str):          .pth checkpoint 檔案路徑。
-        device (torch.device): 目標裝置（CPU 或 CUDA）。
-
-    Returns:
-        dict: 完整的 checkpoint 字典，包含 epoch、val_dice 等訓練資訊。
-    """
-    # map_location 確保可以在不同裝置間載入（例如在 CPU 上載入 GPU 訓練的 checkpoint）
+    # map_location 可以確保在不同裝置間載入（例如在 CPU 上載入 GPU 訓練的 checkpoint）
     ckpt = torch.load(path, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
     return ckpt

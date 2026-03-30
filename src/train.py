@@ -1,17 +1,13 @@
-"""二元語義分割模型的訓練腳本。
+#使用方式：
+#     python src/train.py --model unet --epochs 50 --batch_size 16 --lr 1e-3 --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-unet
+#     python src/train.py --model resnet34_unet --epochs 50 --batch_size 8 --lr 5e-4 --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-resnet34unet
 
-使用方式：
-    python src/train.py --model unet --epochs 50 --batch_size 16 --lr 1e-3 \\
-        --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-unet
-    python src/train.py --model resnet34_unet --epochs 50 --batch_size 8 --lr 5e-4 \\
-        --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-resnet34unet
+# 固定訓練設定：
+#     - Optimizer:  Adam, weight_decay=1e-5
+#     - Scheduler:  CosineAnnealingLR, T_max=epochs, eta_min=1e-6
+#     - Loss:       combined_loss(BCE 0.5 + Dice 0.5)
+#     - Checkpoint: 只在 val Dice 更新最佳值時儲存
 
-固定訓練設定：
-    - Optimizer:  Adam，weight_decay=1e-5
-    - Scheduler:  CosineAnnealingLR，T_max=epochs，eta_min=1e-6
-    - Loss:       combined_loss（BCE 0.5 + Dice 0.5）
-    - Checkpoint: 只在 val Dice 更新最佳值時儲存
-"""
 
 import os
 import sys
@@ -24,7 +20,6 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
-# 讓 Python 能找到同目錄下的其他模組
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from oxford_pet import OxfordPetDataset
@@ -34,7 +29,6 @@ from models.resnet34_unet import ResNet34UNet
 
 
 def get_model(name):
-    """根據名稱回傳對應的模型實例。"""
     if name == "unet":
         return UNet()
     elif name == "resnet34_unet":
@@ -44,12 +38,7 @@ def get_model(name):
 
 
 def train_one_epoch(model, loader, optimizer, device, bce_weight=0.5):
-    """執行一個 epoch 的訓練，回傳平均 loss 和平均 Dice score。
-
-    Args:
-        bce_weight (float): BCE 在 combined_loss 中的權重（預設 0.5）。
-                            設為 0 即為純 Dice Loss，對類別不平衡更穩健。
-    """
+    # 執行一個 epoch 的訓練，回傳平均 loss 和平均 Dice score。
     model.train()
     total_loss = 0.0
     total_dice = 0.0
@@ -77,13 +66,10 @@ def train_one_epoch(model, loader, optimizer, device, bce_weight=0.5):
 
 @torch.no_grad()
 def validate(model, loader, device, bce_weight=0.5):
-    """在驗證集上評估模型，回傳平均 loss 和平均 Dice score。
-
-    @torch.no_grad() 裝飾器關閉梯度計算，節省記憶體和加快速度。
-
-    Args:
-        bce_weight (float): BCE 在 combined_loss 中的權重（預設 0.5）。
-    """
+    # 在驗證集上評估模型，回傳平均 loss 和平均 Dice score。
+    # Args:
+    #     bce_weight (float): BCE 在 combined_loss 中的權重（預設 0.5）。
+   
     model.eval()  # 切換為評估模式（關閉 Dropout / BatchNorm 的訓練行為）
     total_loss = 0.0
     total_dice = 0.0
@@ -113,7 +99,6 @@ def train(args):
     print(f"Device: {device}")
 
     # ---- 建立 Dataset 和 DataLoader ----
-    # list_dir 指定課程提供的 split 檔案目錄；None 時使用原始 80/20 切分
     from torch.utils.data import DataLoader
     train_ds = OxfordPetDataset(args.data_path, mode="train",
                                 img_size=args.img_size, list_dir=args.list_dir)
@@ -164,7 +149,6 @@ def train(args):
             f"Val Loss: {val_loss:.4f}  Val Dice: {val_dice:.4f}"
         )
 
-        # 只在 val Dice 創新高時儲存 checkpoint
         if val_dice > best_dice:
             best_dice = val_dice
             save_checkpoint(model, optimizer, epoch, val_dice, best_path)
@@ -175,13 +159,12 @@ def train(args):
 
 
 def parse_args():
-    """解析命令列參數。"""
     parser = argparse.ArgumentParser(description="Train segmentation model")
 
     parser.add_argument(
         "--model", type=str, default="unet",
         choices=["unet", "resnet34_unet"],
-        help="模型架構"
+        help="Model Architecture"
     )
     parser.add_argument(
         "--data_path", type=str,

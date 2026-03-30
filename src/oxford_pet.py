@@ -1,16 +1,3 @@
-"""Oxford-IIIT Pet 資料集的 PyTorch Dataset 定義。
-
-Trimap 標注說明：
-    pixel 值 1 → 前景（寵物本體），轉換為 binary mask 的 1.0
-    pixel 值 2 → 背景，轉換為 binary mask 的 0.0
-    pixel 值 3 → 邊界（未分類），視為背景，轉換為 0.0
-
-【本次新增】
-    - list_dir 參數：支援讀取課程提供的指定 split 檔案
-      （nycu-2026-spring-dl-lab2-unet / nycu-2026-spring-dl-lab2-resnet34unet）
-    - test mode 額外回傳 orig_w, orig_h：供 inference.py 將 mask resize 回原始尺寸
-"""
-
 import os
 import random
 import numpy as np
@@ -36,31 +23,27 @@ class OxfordPetDataset(Dataset):
         self.mode = mode
         self.img_size = img_size
 
-        # 圖片和 trimap mask 的路徑
         self.image_dir = os.path.join(root, "images")
         self.mask_dir = os.path.join(root, "annotations", "trimaps")
 
         if list_dir is not None:
-            # 使用Kaggle提供的指定 split 檔案
             if mode == "train":
                 list_file = os.path.join(list_dir, "train.txt")
             elif mode == "val":
                 list_file = os.path.join(list_dir, "val.txt")
             else:
-                # test 模式：自動搜尋 test_*.txt
-                # （UNet 用 test_unet.txt；ResNet34 用 test_res_unet.txt）
                 import glob
                 candidates = glob.glob(os.path.join(list_dir, "test*.txt"))
                 if not candidates:
                     raise FileNotFoundError(f"找不到 test*.txt 於 {list_dir}")
-                list_file = sorted(candidates)[0]  # 取第一個匹配的檔案
+                list_file = sorted(candidates)[0]
 
-            # 讀取檔名清單（每行第一個 token 為檔名，忽略 # 開頭的註解行）
+            # 讀取檔名清單
             with open(list_file) as f:
                 self.filenames = [
                     line.strip().split()[0]
                     for line in f
-                    if line.strip() and not line.startswith("#")
+                    if line.strip() and not line.startswith("#") # 每行第一個 token 為檔名，忽略 # 開頭的註解行
                 ]
         else:
             raise ValueError("請提供 list_dir 參數以指定 Kaggle 提供的 split 檔案目錄。")
@@ -97,8 +80,7 @@ class OxfordPetDataset(Dataset):
             image = TF.vflip(image)
             mask  = TF.vflip(mask)
 
-        # 隨機旋轉 ±15°（p=0.5）
-        # image 用 bilinear 插值；mask 用 nearest 避免引入非整數 label
+        # 隨機旋轉 ±15°（p=0.5，image 用 bilinear 插值；mask 用 nearest 避免引入非整數 label
         if random.random() > 0.5:
             angle = random.uniform(-15, 15)
             image = TF.rotate(image, angle, interpolation=TF.InterpolationMode.BILINEAR)
@@ -134,7 +116,7 @@ class OxfordPetDataset(Dataset):
         image = self._load_image(name)
 
         if self.mode == "test":
-            # 【新增】記錄原始圖片尺寸（W, H），inference 時將 mask resize 回原始大小
+            # 記錄原始圖片尺寸（W, H），inference 時將 mask resize 回原始大小
             # Kaggle 用原始圖片尺寸解碼 RLE，所以 mask 必須是原始尺寸
             orig_w, orig_h = image.size
             image = image.resize((self.img_size, self.img_size), Image.BILINEAR)
@@ -194,12 +176,12 @@ def get_dataloaders(data_root, img_size=256, batch_size=16, num_workers=4):
     return train_loader, val_loader, test_loader
 
 
-if __name__ == "__main__":
-    # 快速測試：確認 DataLoader 正常運作
-    train_loader, val_loader, test_loader = get_dataloaders(
-        "dataset/oxford-iiit-pet"
-    )
-    images, masks = next(iter(train_loader))
-    print("圖片 shape:", images.shape)   # (B, 3, 256, 256)
-    print("Mask shape:", masks.shape)    # (B, 1, 256, 256)
-                                                                                                                                                                                                                                              
+# if __name__ == "__main__":
+#     # 快速測試：確認 DataLoader 正常運作
+#     train_loader, val_loader, test_loader = get_dataloaders(
+#         "dataset/oxford-iiit-pet"
+#     )
+#     images, masks = next(iter(train_loader))
+#     print("圖片 shape:", images.shape)   # (B, 3, 256, 256)
+#     print("Mask shape:", masks.shape)    # (B, 1, 256, 256)
+

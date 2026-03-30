@@ -1,25 +1,18 @@
-"""對測試集進行推論並輸出 Kaggle 格式的 CSV 檔。
+# 使用方式：
+#     python src/inference.py --model unet `
+#         --model_path saved_models/unet_best.pth `
+#         --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-unet --gpu 0
 
-使用方式：
-    python src/inference.py --model unet \\
-        --model_path saved_models/unet_best.pth \\
-        --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-unet --gpu 0
-    python src/inference.py --model resnet34_unet \\
-        --model_path saved_models/resnet34_unet_best.pth \\
-        --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-resnet34unet --gpu 1
+#     python src/inference.py --model resnet34_unet `
+#         --model_path saved_models/resnet34_unet_best.pth `
+#         --list_dir dataset/oxford-iiit-pet/nycu-2026-spring-dl-lab2-resnet34unet --gpu 1
 
-輸出：
-    predictions/<model_name>_submission.csv
+# 輸出：predictions/<model_name>_submission.csv
 
-CSV 格式（Kaggle 要求）：
-    image_id,encoded_mask
-    Bengal_61,5539 6 5794 18 ...
-    ...
+#     mask resize 回原始尺寸：
+#     模型推論時輸入為 256×256，但 Oxford Pet 原始圖片各自有不同尺寸。
+#     Kaggle 用原始尺寸解碼 RLE，因此提交前必須將 mask resize 回原始大小。
 
-【重要】mask resize 回原始尺寸：
-    模型推論時輸入為 256×256，但 Oxford Pet 原始圖片各自有不同尺寸。
-    Kaggle 用原始尺寸解碼 RLE，因此提交前必須將 mask resize 回原始大小。
-"""
 
 import os
 import sys
@@ -31,7 +24,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from PIL import Image  # 用於 resize 預測 mask
 
-# 讓 Python 能找到同目錄下的其他模組
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from oxford_pet import OxfordPetDataset
@@ -41,25 +33,21 @@ from models.resnet34_unet import ResNet34UNet
 
 
 def get_model(name):
-    """根據名稱回傳對應的模型實例。"""
     if name == "unet":
         return UNet()
     elif name == "resnet34_unet":
         return ResNet34UNet()
     else:
-        raise ValueError(f"未知的模型: {name}")
+        raise ValueError(f"Unknown model: {name}")
 
 
 @torch.no_grad()
 def inference(args):
-    """載入 checkpoint，對測試集推論並輸出 Kaggle 提交 CSV。"""
-
-    # ---- 選擇裝置 ----
     if args.gpu is not None and torch.cuda.is_available():
         device = torch.device(f"cuda:{args.gpu}")
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"裝置: {device}")
+    print(f"Device: {device}")
 
     # ---- 建立測試集 DataLoader ----
     # test mode 不需要 mask，回傳 (image, filename, orig_w, orig_h)
@@ -83,7 +71,7 @@ def inference(args):
 
     rows = []  # 儲存 (image_id, rle_string) 的清單
 
-    # ---- 逐 batch 推論 ----
+    # ---- 逐 batch inference ----
     for images, names, orig_ws, orig_hs in tqdm(test_loader, desc="Inference"):
         images = images.to(device)
         preds  = model(images)   # shape: (B, 1, 256, 256)，機率值 [0,1]
@@ -95,7 +83,7 @@ def inference(args):
             orig_w = int(orig_w)
             orig_h = int(orig_h)
 
-            # 【關鍵步驟】將 256×256 的預測 mask resize 回原始圖片尺寸
+            # !!! 將 256×256 的預測 mask resize 回原始圖片尺寸
             # Kaggle 用原始圖片尺寸解碼 RLE，若不 resize 則 mask 完全錯位
             if pred_mask.shape != (orig_h, orig_w):
                 pil_mask = Image.fromarray(pred_mask)
